@@ -81,6 +81,24 @@ async def ask_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Telegram username: @{context.user_data['username']}\n\n"
         f"Your registration is submitted and awaiting approval!"
     )
+
+    # Notify admin about new registration
+    try:
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"📌 New registration received!\n\n"
+                f"Name: {context.user_data['full_name']}\n"
+                f"Phone: {context.user_data['phone']}\n"
+                f"Telegram: @{context.user_data['username']}\n"
+                f"User ID: {telegram_id}\n\n"
+                f"Use /pending to see all registrations\n"
+                f"Use /approve <id> or /reject <id>"
+            )
+        )
+    except Exception as e:
+        print(f"Failed to notify admin: {e}")
+
     return ConversationHandler.END
 
 
