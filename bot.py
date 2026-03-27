@@ -11,8 +11,8 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-from database import create_registration, init_db
-from config import BOT_TOKEN
+from database import create_registration, init_db, approve_registration, reject_registration, get_pending_registrations, get_registration
+from config import BOT_TOKEN, ADMIN_ID, GROUP_LINK
 
 logging.basicConfig(level=logging.INFO)
 
@@ -30,6 +30,7 @@ WELCOME_IMAGE = os.path.join(IMAGES_DIR, "welcome.png")
 ASK_NAME, ASK_PHONE = range(2)
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
+bot = app.bot
 
 # ---------------------------
 # /start command
@@ -74,9 +75,98 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Thanks {context.user_data['full_name']}!\n"
         f"Telegram username: @{telegram_username}\n"
         f"Phone: {context.user_data['phone']}\n\n"
-        f"You are now registered for the workshop!"
+        f"Your registration is submitted and awaiting approval!"
     )
     return ConversationHandler.END
+
+
+# ---------------------------
+# Admin commands
+# ---------------------------
+async def pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+
+    pending_regs = get_pending_registrations()
+    if not pending_regs:
+        await update.message.reply_text("No pending registrations.")
+        return
+
+    message = "📋 Pending Registrations:\n\n"
+    for reg in pending_regs:
+        message += f"ID: {reg['id']}\nName: {reg['full_name']}\nPhone: {reg['phone']}\nUsername: @{reg['username']}\n\n"
+    message += "Use /approve <id> or /reject <id>"
+    await update.message.reply_text(message)
+
+
+async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /approve <registration_id>")
+        return
+
+    try:
+        reg_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid registration ID.")
+        return
+
+    reg = get_registration(reg_id)
+    if not reg:
+        await update.message.reply_text("❌ Registration not found.")
+        return
+
+    if reg['status'] != 'PENDING':
+        await update.message.reply_text("❌ Registration is not pending.")
+        return
+
+    approve_registration(reg_id)
+
+    # Send approval message with group link
+    await bot.send_message(
+        chat_id=reg["telegram_id"],
+        text=f"✅ Your registration has been approved!\n\nJoin the workshop group: {GROUP_LINK}"
+    )
+
+    await update.message.reply_text(f"✅ Registration {reg_id} approved.")
+
+
+async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /reject <registration_id>")
+        return
+
+    try:
+        reg_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid registration ID.")
+        return
+
+    reg = get_registration(reg_id)
+    if not reg:
+        await update.message.reply_text("❌ Registration not found.")
+        return
+
+    if reg['status'] != 'PENDING':
+        await update.message.reply_text("❌ Registration is not pending.")
+        return
+
+    reject_registration(reg_id)
+
+    await bot.send_message(
+        chat_id=reg["telegram_id"],
+        text="❌ Your registration has been rejected. Please contact support."
+    )
+
+    await update.message.reply_text(f"❌ Registration {reg_id} rejected.")
 
 
 # ---------------------------
@@ -95,6 +185,9 @@ conv_handler = ConversationHandler(
 # Register handlers
 # ---------------------------
 app.add_handler(conv_handler)
+app.add_handler(CommandHandler("pending", pending))
+app.add_handler(CommandHandler("approve", approve))
+app.add_handler(CommandHandler("reject", reject))
 
 # ---------------------------
 # Run bot
