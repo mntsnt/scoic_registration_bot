@@ -27,7 +27,7 @@ WELCOME_IMAGE = os.path.join(IMAGES_DIR, "welcome.png")
 # ---------------------------
 # Conversation states
 # ---------------------------
-ASK_NAME, ASK_PHONE = range(2)
+ASK_NAME, ASK_PHONE, ASK_USERNAME = range(3)
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = app.bot
@@ -59,8 +59,12 @@ async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["phone"] = update.message.text
-    telegram_username = update.effective_user.username or "No username"
-    context.user_data["username"] = telegram_username
+    await update.message.reply_text("📱 Great! Now please provide your Telegram username (without @).")
+    return ASK_USERNAME
+
+
+async def ask_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["username"] = update.message.text.strip("@")  # Remove @ if user includes it
 
     # Save registration
     telegram_id = update.effective_user.id
@@ -68,13 +72,13 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         telegram_id,
         context.user_data["full_name"],
         context.user_data["phone"],
-        telegram_username
+        context.user_data["username"]
     )
 
     await update.message.reply_text(
         f"✅ Thanks {context.user_data['full_name']}!\n"
-        f"Telegram username: @{telegram_username}\n"
-        f"Phone: {context.user_data['phone']}\n\n"
+        f"Phone: {context.user_data['phone']}\n"
+        f"Telegram username: @{context.user_data['username']}\n\n"
         f"Your registration is submitted and awaiting approval!"
     )
     return ConversationHandler.END
@@ -177,6 +181,7 @@ conv_handler = ConversationHandler(
     states={
         ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
         ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_phone)],
+        ASK_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_username)],
     },
     fallbacks=[],
 )
