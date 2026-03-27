@@ -12,8 +12,12 @@ from telegram.ext import (
     filters
 )
 from database import (
-    create_registration, init_db, approve_registration,
-    reject_registration, get_pending_registrations, get_registration
+    init_db,
+    create_registration,
+    get_pending_registrations,
+    get_registration,
+    approve_registration,
+    reject_registration
 )
 from config import BOT_TOKEN, ADMIN_ID, GROUP_LINK
 
@@ -24,7 +28,6 @@ logging.basicConfig(level=logging.INFO)
 # ---------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.path.join(BASE_DIR, "images")
-
 WELCOME_IMAGE = os.path.join(IMAGES_DIR, "welcome.png")
 
 # ---------------------------
@@ -39,7 +42,6 @@ bot = app.bot
 # /start command
 # ---------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if os.path.exists(WELCOME_IMAGE):
         with open(WELCOME_IMAGE, "rb") as photo:
             await update.message.reply_photo(
@@ -50,115 +52,155 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "👋 Welcome! To register for the workshop, please tell me your full name."
         )
-
     return ASK_NAME
 
 
 async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["full_name"] = update.message.text
-    await update.message.reply_text("📞 Great! Now send me your phone number.")
+    context.user_data["full_name"] = update.message.text.strip()
+    await update.message.reply_text("📞 Great! Please send your phone number.")
     return ASK_PHONE
 
 
 async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    telegram_id = user.id
-    username = user.username or "No username"
+    context.user_data["phone"] = update.message.text.strip()
+    await update.message.reply_text("📱 Great! Please send your Telegram username (without @).")
+    return ASK_USERNAME
 
-    registrations[telegram_id] = {
-        "full_name": context.user_data["full_name"],
-        "phone": update.message.text,
-        "username": username
-    }
+
+async def ask_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.message.text.strip().lstrip("@")
+    context.user_data["username"] = username
+
+    telegram_id = update.effective_user.id
+    create_registration(
+        telegram_id,
+        context.user_data["full_name"],
+        context.user_data["phone"],
+        username
+    )
 
     await update.message.reply_text(
         f"✅ Thanks {context.user_data['full_name']}!\n"
-        f"📞 Phone: {update.message.text}\n\n"
-        f"⏳ Your registration is submitted.\n"
-        f"Waiting for admin approval..."
+        f"📞 Phone: {context.user_data['phone']}\n"
+        f"💬 Username: @{username if username else 'No username'}\n\n"
+        "Your registration is submitted and awaiting admin approval."
     )
 
-    # Notify Admin
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
-            f"📌 New Registration!\n\n"
-            f"🆔 User ID: {telegram_id}\n"
-            f"👤 Name: {context.user_data['full_name']}\n"
-            f"📞 Phone: {update.message.text}\n"
-            f"💬 Telegram: @{username}\n\n"
-            f"Approve with:\n/approve {telegram_id}"
+    # Notify admin
+    try:
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"📌 New registration received!\n\n"
+                f"Name: {context.user_data['full_name']}\n"
+                f"Phone: {context.user_data['phone']}\n"
+                f"Username: @{username if username else 'N/A'}\n"
+                f"User ID: {telegram_id}\n\n"
+                "Use /pending to review all pending registrations.\n"
+                "Use /approve <id> or /reject <id> to respond."
+            )
         )
-    )
+    except Exception as e:
+        logging.error(f"Failed to notify admin: {e}")
 
     return ConversationHandler.END
 
 
 # ---------------------------
-# APPROVE USER
+# Admin commands
 # ---------------------------
+async def pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+
+    pending_regs = get_pending_registrations()
+    if not pending_regs:
+        await update.message.reply_text("No pending registrations.")
+        return
+
+    msg_lines = ["📋 Pending Registrations:", ""]
+    for r in pending_regs:
+        msg_lines.append(f"ID: {r['id']} | Name: {r['full_name']} | Phone: {r['phone']} | Username: @{r['username']}")
+    msg_lines.append("")
+    msg_lines.append("Use /approve <id> or /reject <id> to process.")
+
+    await update.message.reply_text("\n".join(msg_lines))
+
+
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ You are not allowed to use this.")
+        await update.message.reply_text("❌ Access denied.")
         return
 
     if not context.args:
-        await update.message.reply_text("❌ Usage: /approve <user_id>")
+        await update.message.reply_text("❌ Usage: /approve <registration_id>")
         return
 
     try:
-        user_id = int(context.args[0])
-    except:
-        await update.message.reply_text("❌ Invalid user ID.")
+        reg_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid registration ID.")
         return
 
-    if user_id not in registrations:
-        await update.message.reply_text("❌ User not found.")
+    reg = get_registration(reg_id)
+    if not reg:
+        await update.message.reply_text("❌ Registration not found.")
         return
+
+    if reg["status"] != "PENDING":
+        await update.message.reply_text("❌ Registration is not pending.")
+        return
+
+    approve_registration(reg_id)
 
     try:
-        await context.bot.send_message(
-            chat_id=user_id,
+        await bot.send_message(
+            chat_id=reg["telegram_id"],
             text=(
-                "🎉 You have been approved for the workshop!\n\n"
-                "👉 Join the official group here:\n"
-                f"{GROUP_LINK}"
+                "🎉 Your registration has been approved!\n\n"
+                f"Join the workshop group: {GROUP_LINK}"
             )
         )
-
-        await update.message.reply_text(f"✅ Approved user {user_id}")
-
+        await update.message.reply_text(f"✅ Registration {reg_id} approved and group link sent.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Failed to send message.\nError: {e}")
+        await update.message.reply_text(f"❌ Approved but failed to notify user: {e}")
 
 
-# ---------------------------
-# REJECT USER (optional)
-# ---------------------------
 async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
         return
 
     if not context.args:
-        await update.message.reply_text("❌ Usage: /reject <user_id>")
+        await update.message.reply_text("❌ Usage: /reject <registration_id>")
         return
 
     try:
-        user_id = int(context.args[0])
-    except:
-        await update.message.reply_text("❌ Invalid user ID.")
+        reg_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid registration ID.")
         return
 
-    if user_id not in registrations:
-        await update.message.reply_text("❌ User not found.")
+    reg = get_registration(reg_id)
+    if not reg:
+        await update.message.reply_text("❌ Registration not found.")
         return
 
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="❌ Your registration was not approved. Please contact admin."
-    )
+    if reg["status"] != "PENDING":
+        await update.message.reply_text("❌ Registration is not pending.")
+        return
 
-    await update.message.reply_text(f"❌ Rejected user {user_id}")
+    reject_registration(reg_id)
+
+    try:
+        await bot.send_message(
+            chat_id=reg["telegram_id"],
+            text="❌ Your registration has been rejected. Please contact support."
+        )
+        await update.message.reply_text(f"✅ Registration {reg_id} rejected.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Rejected but failed to notify user: {e}")
 
 
 # ---------------------------
@@ -167,134 +209,9 @@ async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler("start", start)],
     states={
-        ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
-        ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_phone)],
-    },
-    fallbacks=[]
-)
-
-# ---------------------------
-# Register handlers
-# ---------------------------
-app.add_handler(conv_handler)
-app.add_handler(CommandHandler("approve", approve))
-app.add_handler(CommandHandler("reject", reject))
-
-# ---------------------------
-# Run bot
-# ---------------------------
-if __name__ == "__main__":
-    print("🤖 Bot is running...")
-    app.run_polling()
-async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    telegram_id = user.id
-    username = user.username or "No username"
-
-    registrations[telegram_id] = {
-        "full_name": context.user_data["full_name"],
-        "phone": update.message.text,
-        "username": username
-    }
-
-    await update.message.reply_text(
-        f"✅ Thanks {context.user_data['full_name']}!\n"
-        f"📞 Phone: {update.message.text}\n\n"
-        f"⏳ Your registration is submitted.\n"
-        f"Waiting for admin approval..."
-    )
-
-    # Notify Admin
-    await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
-            f"📌 New Registration!\n\n"
-            f"🆔 User ID: {telegram_id}\n"
-            f"👤 Name: {context.user_data['full_name']}\n"
-            f"📞 Phone: {update.message.text}\n"
-            f"💬 Telegram: @{username}\n\n"
-            f"Approve with:\n/approve {telegram_id}"
-        )
-    )
-
-    return ConversationHandler.END
-
-
-# ---------------------------
-# APPROVE USER
-# ---------------------------
-async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ You are not allowed to use this.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /approve <user_id>")
-        return
-
-    try:
-        user_id = int(context.args[0])
-    except:
-        await update.message.reply_text("❌ Invalid user ID.")
-        return
-
-    if user_id not in registrations:
-        await update.message.reply_text("❌ User not found.")
-        return
-
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=(
-                "🎉 You have been approved for the workshop!\n\n"
-                "👉 Join the official group here:\n"
-                f"{GROUP_LINK}"
-            )
-        )
-
-        await update.message.reply_text(f"✅ Approved user {user_id}")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Failed to send message.\nError: {e}")
-
-
-# ---------------------------
-# REJECT USER (optional)
-# ---------------------------
-async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /reject <user_id>")
-        return
-
-    try:
-        user_id = int(context.args[0])
-    except:
-        await update.message.reply_text("❌ Invalid user ID.")
-        return
-
-    if user_id not in registrations:
-        await update.message.reply_text("❌ User not found.")
-        return
-
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="❌ Your registration was not approved. Please contact admin."
-    )
-
-    await update.message.reply_text(f"❌ Rejected user {user_id}")
-
-
-# ---------------------------
-# Conversation handler
-# ---------------------------
-conv_handler = ConversationHandler(
-    entry_points=[CommandHandler("start", start)],
-    states={
-        ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
-        ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_phone)],
+        ASK_NAME: [MessageHandler(filters.TEXT ;& ~filters.COMMAND, ask_name)],
+        ASK_PHONE: [MessageHandler(filters.TEXT ;& ~filters.COMMAND, ask_phone)],
+        ASK_USERNAME: [MessageHandler(filters.TEXT ;& ~filters.COMMAND, ask_username)],
     },
     fallbacks=[],
 )
@@ -303,6 +220,7 @@ conv_handler = ConversationHandler(
 # Register handlers
 # ---------------------------
 app.add_handler(conv_handler)
+app.add_handler(CommandHandler("pending", pending))
 app.add_handler(CommandHandler("approve", approve))
 app.add_handler(CommandHandler("reject", reject))
 
@@ -310,5 +228,6 @@ app.add_handler(CommandHandler("reject", reject))
 # Run bot
 # ---------------------------
 if __name__ == "__main__":
+    init_db()
     print("🤖 Bot is running...")
     app.run_polling()
