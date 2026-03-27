@@ -16,7 +16,7 @@ from config import BOT_TOKEN, ADMIN_ID, GROUP_LINK
 logging.basicConfig(level=logging.INFO)
 
 # ---------------------------
-# Image Directory
+# Image Base Directory
 # ---------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.path.join(BASE_DIR, "images")
@@ -29,16 +29,14 @@ WELCOME_IMAGE = os.path.join(IMAGES_DIR, "welcome.png")
 ASK_NAME, ASK_PHONE = range(2)
 
 # ---------------------------
-# Temporary storage (simple)
+# Temporary storage (no DB)
 # ---------------------------
-registrations = {}   # user_id -> data
-approved_users = set()
+registrations = {}
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-bot = app.bot
 
 # ---------------------------
-# /start
+# /start command
 # ---------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -57,7 +55,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------
-# Name
+# Ask Name
 # ---------------------------
 async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["full_name"] = update.message.text
@@ -66,7 +64,7 @@ async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------
-# Phone + Save
+# Ask Phone + Save Registration
 # ---------------------------
 async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -80,14 +78,14 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     await update.message.reply_text(
-        f"✅ Registration submitted!\n\n"
-        f"👤 Name: {context.user_data['full_name']}\n"
+        f"✅ Thanks {context.user_data['full_name']}!\n"
         f"📞 Phone: {update.message.text}\n\n"
-        f"⏳ Waiting for admin approval..."
+        f"⏳ Your registration is submitted.\n"
+        f"Waiting for admin approval..."
     )
 
-    # Notify admin
-    await bot.send_message(
+    # Notify Admin
+    await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=(
             f"📌 New Registration!\n\n"
@@ -103,35 +101,70 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------
-# APPROVE COMMAND
+# APPROVE USER
 # ---------------------------
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ You are not allowed to use this.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /approve <user_id>")
+        return
+
+    try:
+        user_id = int(context.args[0])
+    except:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+
+    if user_id not in registrations:
+        await update.message.reply_text("❌ User not found.")
+        return
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "🎉 You have been approved for the workshop!\n\n"
+                "👉 Join the official group here:\n"
+                f"{GROUP_LINK}"
+            )
+        )
+
+        await update.message.reply_text(f"✅ Approved user {user_id}")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to send message.\nError: {e}")
+
+
+# ---------------------------
+# REJECT USER (optional)
+# ---------------------------
+async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: /approve <user_id>")
+        await update.message.reply_text("❌ Usage: /reject <user_id>")
         return
 
-    user_id = int(context.args[0])
+    try:
+        user_id = int(context.args[0])
+    except:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
 
     if user_id not in registrations:
-        await update.message.reply_text("User not found.")
+        await update.message.reply_text("❌ User not found.")
         return
 
-    approved_users.add(user_id)
-
-    # Send group link to user
-    await bot.send_message(
+    await context.bot.send_message(
         chat_id=user_id,
-        text=(
-            "🎉 You have been approved for the workshop!\n\n"
-            "👉 Join the official group here:\n"
-            f"{GROUP_LINK}"
-        )
+        text="❌ Your registration was not approved. Please contact admin."
     )
 
-    await update.message.reply_text(f"✅ Approved user {user_id}")
+    await update.message.reply_text(f"❌ Rejected user {user_id}")
 
 
 # ---------------------------
@@ -151,6 +184,7 @@ conv_handler = ConversationHandler(
 # ---------------------------
 app.add_handler(conv_handler)
 app.add_handler(CommandHandler("approve", approve))
+app.add_handler(CommandHandler("reject", reject))
 
 # ---------------------------
 # Run bot
