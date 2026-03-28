@@ -1,60 +1,38 @@
-import sqlite3
-from config import DB_NAME
+# database.py
 
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
+import json
+import os
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS registrations (
-        user_id INTEGER PRIMARY KEY,
-        full_name TEXT,
-        phone TEXT,
-        username TEXT,
-        status TEXT DEFAULT 'pending'
-    )
-    """)
+DB_FILE = "users.json"
 
-    conn.commit()
-    conn.close()
+users = {}  # user_id -> user_data
 
+def load_users():
+    global users
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, 'r') as f:
+            users = json.load(f)
 
-def create_registration(user_id, full_name, phone, username):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
+def save_users():
+    with open(DB_FILE, 'w') as f:
+        json.dump(users, f, indent=4)
 
-    c.execute("""
-    INSERT OR REPLACE INTO registrations (user_id, full_name, phone, username, status)
-    VALUES (?, ?, ?, ?, 'pending')
-    """, (user_id, full_name, phone, username))
+def add_user(user_id, name, phone, username=None):
+    users[user_id] = {
+        "name": name,
+        "phone": phone,
+        "username": username,
+        "approved": False
+    }
+    save_users()
 
-    conn.commit()
-    conn.close()
+def get_user(user_id):
+    return users.get(user_id)
 
+def approve_user(user_id):
+    if user_id in users:
+        users[user_id]["approved"] = True
+        save_users()
 
-def approve_registration(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-
-    c.execute("UPDATE registrations SET status='approved' WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-
-
-def reject_registration(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-
-    c.execute("UPDATE registrations SET status='rejected' WHERE user_id=?", (user_id,))
-    conn.commit()
-    conn.close()
-
-
-def get_registration(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-
-    c.execute("SELECT * FROM registrations WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row
+# Load users on import
+load_users()
