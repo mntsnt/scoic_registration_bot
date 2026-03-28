@@ -72,9 +72,10 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = context.user_data["name"]
     user_id = update.message.from_user.id
-    username = update.message.from_user.username
+    username_value = update.message.from_user.username
+    username_display = f"@{username_value}" if username_value else "(no username)"
 
-    database.add_user(user_id, name, phone, username=username)
+    database.add_user(user_id, name, phone, username=username_value)
 
     # Send to admin
     for admin_id in config.ADMIN_IDS:
@@ -85,7 +86,7 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 Name: {name}\n"
                 f"📞 Phone: {phone}\n"
                 f"🆔 User ID: {user_id}\n"
-                f"🆔 User Name: @{username}\n\n"
+                f"🆔 User Name: {username_display}\n\n"
                 f"Approve with:\n/approve {user_id}"
             )
         )
@@ -164,8 +165,12 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     approved = []
     pending = []
     for uid, info in all_users.items():
-        user_name = info.get("username") or "(no username)"
-        line = f"{uid}: {info['name']} ({info['phone']}) @{user_name}"
+        username_value = info.get("username")
+        if username_value:
+            user_name_text = f"@{username_value}"
+        else:
+            user_name_text = "(no username)"
+        line = f"{uid}: {info['name']} ({info['phone']}) {user_name_text}"
         if info.get("approved"):
             approved.append(line)
         else:
@@ -194,6 +199,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    if not config.BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not set. Set the BOT_TOKEN environment variable before starting the bot.")
+
+    if not config.ADMIN_IDS:
+        raise RuntimeError("ADMIN_IDS is not configured. Set ADMIN_ID or ADMIN_IDS environment variable.")
+
     app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
