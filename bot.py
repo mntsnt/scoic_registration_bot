@@ -48,15 +48,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["name"] = update.message.text
 
-    # Ask for phone number with button
-    keyboard = [
-        [KeyboardButton("Share Phone Number", request_contact=True)]
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-
     await update.message.reply_text(
-        "Please share your phone number:",
-        reply_markup=reply_markup
+        "Please enter your phone number:"
     )
     return PHONE
 
