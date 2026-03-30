@@ -5,7 +5,9 @@ from pathlib import Path
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
-    KeyboardButton
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -13,7 +15,8 @@ from telegram.ext import (
     MessageHandler,
     ConversationHandler,
     ContextTypes,
-    filters
+    filters,
+    CallbackQueryHandler
 )
 
 import config
@@ -23,7 +26,7 @@ import database
 logging.basicConfig(level=logging.INFO)
 
 # Conversation states
-NAME, PHONE = range(2)
+NAME, PHONE, YEAR = range(3)
 
 
 # Start command
@@ -63,12 +66,40 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         phone = update.message.text
 
+    context.user_data["phone"] = phone
+
+    # Create inline keyboard for year selection
+    keyboard = [
+        [InlineKeyboardButton("Premed", callback_data="year:Premed")],
+        [InlineKeyboardButton("PC I", callback_data="year:PC I")],
+        [InlineKeyboardButton("PC II", callback_data="year:PC II")],
+        [InlineKeyboardButton("C I", callback_data="year:C I")],
+        [InlineKeyboardButton("C II", callback_data="year:C II")],
+        [InlineKeyboardButton("Internship", callback_data="year:Internship")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Please select your year in medical school:",
+        reply_markup=reply_markup
+    )
+    return YEAR
+
+
+# Get year selection
+async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    year = query.data.split(":", 1)[1]
+
     name = context.user_data["name"]
-    user_id = update.message.from_user.id
-    username_value = update.message.from_user.username
+    phone = context.user_data["phone"]
+    user_id = query.from_user.id
+    username_value = query.from_user.username
     username_display = f"@{username_value}" if username_value else "(no username)"
 
-    database.add_user(user_id, name, phone, username=username_value)
+    database.add_user(user_id, name, phone, year, username=username_value)
 
     # Send to admin
     for admin_id in config.ADMIN_IDS:
@@ -78,14 +109,15 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📥 New Registration\n\n"
                 f"👤 Name: {name}\n"
                 f"📞 Phone: {phone}\n"
+                f"🎓 Year: {year}\n"
                 f"🆔 User ID: {user_id}\n"
                 f"🆔 User Name: {username_display}\n\n"
                 f"Approve with:\n/approve {user_id}"
             )
         )
 
-    await update.message.reply_text(
-        "✅ Your data has been submitted for approval.\nPlease wait..."
+    await query.edit_message_text(
+        text="✅ Your data has been submitted for approval.\nPlease wait..."
     )
 
     return ConversationHandler.END
@@ -163,7 +195,7 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_name_text = f"@{username_value}"
         else:
             user_name_text = "(no username)"
-        line = f"{uid}: {info['name']} ({info['phone']}) {user_name_text}"
+        line = f"{uid}: {info['name']} ({info['phone']}) {info.get('year', 'N/A')} {user_name_text}"
         if info.get("approved"):
             approved.append(line)
         else:
@@ -208,6 +240,7 @@ def main():
                 MessageHandler(filters.CONTACT, get_phone),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone),
             ],
+            YEAR: [CallbackQueryHandler(get_year, pattern=r"^year:")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )

@@ -17,10 +17,11 @@ def save_users():
     with open(DB_FILE, 'w') as f:
         json.dump(users, f, indent=4)
 
-def add_user(user_id, name, phone, username=None):
+def add_user(user_id, name, phone, year, username=None):
     users[user_id] = {
         "name": name,
         "phone": phone,
+        "year": year,
         "username": username,
         "approved": False
     }
