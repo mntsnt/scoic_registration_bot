@@ -185,13 +185,25 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         approved_ids.append(uid)
 
         # Notify user
-        await context.bot.send_message(
-            chat_id=uid,
-            text=(
-                "🎉 Your registration has been approved!\n\n"
-                f"Join the workshop group here:\n{config.WORKSHOP_GROUP_LINK}"
+        if config.WORKSHOP_GROUP_LINK:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=(
+                    "🎉 Your registration has been approved!\n\n"
+                    f"Join the workshop group here:\n{config.WORKSHOP_GROUP_LINK}"
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🚀 Join Workshop Group", url=config.WORKSHOP_GROUP_LINK)]
+                ])
             )
-        )
+        else:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=(
+                    "🎉 Your registration has been approved!\n\n"
+                    "Please contact the administrators to get the workshop group link."
+                )
+            )
 
     resp_parts = []
     if approved_ids:
