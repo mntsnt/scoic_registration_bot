@@ -101,11 +101,11 @@ async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     database.add_user(user_id, name, phone, year, username=username_value)
 
-    # Send to admin
-    for admin_id in config.ADMIN_IDS:
-        await context.bot.send_message(
-            chat_id=admin_id,
-            text=(
+    # Send to all admins (both full and limited) with appropriate messages
+    for admin_id in config.ALL_ADMIN_IDS:
+        if admin_id in config.FULL_ADMIN_IDS:
+            # Full admin gets approval instructions
+            message = (
                 f"📥 New Registration\n\n"
                 f"👤 Name: {name}\n"
                 f"📞 Phone: {phone}\n"
@@ -114,7 +114,18 @@ async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🆔 User Name: {username_display}\n\n"
                 f"Approve with:\n/approve {user_id}"
             )
-        )
+        else:
+            # Limited admin gets data only
+            message = (
+                f"📥 New Registration\n\n"
+                f"👤 Name: {name}\n"
+                f"📞 Phone: {phone}\n"
+                f"🎓 Year: {year}\n"
+                f"🆔 User ID: {user_id}\n"
+                f"🆔 User Name: {username_display}"
+            )
+        
+        await context.bot.send_message(chat_id=admin_id, text=message)
 
     await query.edit_message_text(
         text="✅ Your data has been submitted for approval.\nPlease wait..."
@@ -125,7 +136,8 @@ async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Admin approval command
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in config.ADMIN_IDS:
+    if update.message.from_user.id not in config.FULL_ADMIN_IDS:
+        await update.message.reply_text("❌ You don't have permission to approve users.")
         return
 
     if not context.args:
@@ -179,7 +191,48 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Admin list users command
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in config.ADMIN_IDS:
+    if update.message.from_user.id not in config.FULL_ADMIN_IDS:
+        await update.message.reply_text("❌ You don't have permission to list users.")
+        return
+
+    all_users = database.users
+    if not all_users:
+        await update.message.reply_text("No users registered yet.")
+        return
+
+    approved = []
+    pending = []
+    for uid, info in all_users.items():
+        username_value = info.get("username")
+        if username_value:
+            user_name_text = f"@{username_value}"
+        else:
+            user_name_text = "(no username)"
+        line = f"{uid}: {info['name']} ({info['phone']}) {info.get('year', 'N/A')} {user_name_text}"
+        if info.get("approved"):
+            approved.append(line)
+        else:
+            pending.append(line)
+
+    text_parts = []
+    if approved:
+        text_parts.append("✅ Approved users:")
+        text_parts.extend(approved)
+    else:
+        text_parts.append("✅ Approved users: none")
+
+    if pending:
+        text_parts.append("\n🕒 Pending users:")
+        text_parts.extend(pending)
+    else:
+        text_parts.append("\n🕒 Pending users: none")
+
+    await update.message.reply_text("\n".join(text_parts))
+
+
+# Limited admin view users command (read-only)
+async def view_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id not in config.ALL_ADMIN_IDS:
         return
 
     all_users = database.users
@@ -227,8 +280,8 @@ def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Set the BOT_TOKEN environment variable before starting the bot.")
 
-    if not config.ADMIN_IDS:
-        raise RuntimeError("ADMIN_IDS is not configured. Set ADMIN_ID or ADMIN_IDS environment variable.")
+    if not config.ALL_ADMIN_IDS:
+        raise RuntimeError("No admin IDs configured. Set FULL_ADMIN_IDS, LIMITED_ADMIN_IDS, or ADMIN_IDS environment variables.")
 
     app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
@@ -248,6 +301,7 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("approve", approve))
     app.add_handler(CommandHandler("list_users", list_users))
+    app.add_handler(CommandHandler("view_users", view_users))
 
     print("Bot is running...")
     app.run_polling()
