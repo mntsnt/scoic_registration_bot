@@ -34,13 +34,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     
     # Prevent admins from registering as users
-    if user_id in config.ALL_ADMIN_IDS:
+    if user_id in config.FULL_ADMIN_IDS:
         await update.message.reply_text(
             "👋 Welcome Admin!\n\n"
             "As an administrator, you cannot register as a user.\n"
-            "Use /view_users to see registered users." 
-            if user_id in config.LIMITED_ADMIN_IDS 
-            else "Use /approve or /list_users to manage registrations."
+            "Use /approve or /list_users to manage registrations."
         )
         return ConversationHandler.END
     
@@ -129,18 +127,6 @@ async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=admin_id, text=message)
         except Exception as e:
             logging.warning(f"Failed to send notification to full admin {admin_id}: {e}")
-
-    # Store notifications for limited admins (they will receive them when they interact with the bot)
-    for admin_id in config.LIMITED_ADMIN_IDS:
-        message = (
-            f"📥 New Registration\n\n"
-            f"👤 Name: {name}\n"
-            f"📞 Phone: {phone}\n"
-            f"🎓 Year: {year}\n"
-            f"🆔 User ID: {user_id}\n"
-            f"🆔 User Name: {username_display}"
-        )
-        database.add_pending_notification(admin_id, message)
 
     await query.edit_message_text(
         text="✅ Your data has been submitted for approval.\nPlease wait..."
@@ -257,56 +243,6 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(text_parts))
 
 
-# Limited admin view users command (read-only)
-async def view_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in config.ALL_ADMIN_IDS:
-        return
-
-    # Send any pending notifications to limited admins
-    if user_id in config.LIMITED_ADMIN_IDS:
-        pending_notifications = database.get_and_clear_pending_notifications(user_id)
-        for notification in pending_notifications:
-            try:
-                await update.message.reply_text(notification)
-            except Exception as e:
-                logging.warning(f"Failed to send pending notification to limited admin {user_id}: {e}")
-
-    all_users = database.users
-    if not all_users:
-        await update.message.reply_text("No users registered yet.")
-        return
-
-    approved = []
-    pending = []
-    for uid, info in all_users.items():
-        username_value = info.get("username")
-        if username_value:
-            user_name_text = f"@{username_value}"
-        else:
-            user_name_text = "(no username)"
-        line = f"{uid}: {info['name']} ({info['phone']}) {info.get('year', 'N/A')} {user_name_text}"
-        if info.get("approved"):
-            approved.append(line)
-        else:
-            pending.append(line)
-
-    text_parts = []
-    if approved:
-        text_parts.append("✅ Approved users:")
-        text_parts.extend(approved)
-    else:
-        text_parts.append("✅ Approved users: none")
-
-    if pending:
-        text_parts.append("\n🕒 Pending users:")
-        text_parts.extend(pending)
-    else:
-        text_parts.append("\n🕒 Pending users: none")
-
-    await update.message.reply_text("\n".join(text_parts))
-
-
 # Cancel handler
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Process cancelled.")
@@ -317,8 +253,8 @@ def main():
     if not config.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Set the BOT_TOKEN environment variable before starting the bot.")
 
-    if not config.ALL_ADMIN_IDS:
-        raise RuntimeError("No admin IDs configured. Set FULL_ADMIN_IDS, LIMITED_ADMIN_IDS, or ADMIN_IDS environment variables.")
+    if not config.FULL_ADMIN_IDS:
+        raise RuntimeError("No admin IDs configured. Set FULL_ADMIN_IDS or ADMIN_IDS environment variables.")
 
     app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
@@ -338,7 +274,6 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("approve", approve))
     app.add_handler(CommandHandler("list_users", list_users))
-    app.add_handler(CommandHandler("view_users", view_users))
 
     print("Bot is running...")
     app.run_polling()
