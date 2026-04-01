@@ -1,3 +1,4 @@
+import logging
 import os
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -11,7 +12,16 @@ if ADMIN_ID is not None:
 
 ADMIN_IDS_ENV = os.environ.get("ADMIN_IDS")  # comma-separated ids
 if ADMIN_IDS_ENV:
-    ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_ENV.split(",") if x.strip().isdigit()]
+    admins = []
+    for x in ADMIN_IDS_ENV.split(","):
+        x = x.strip()
+        if not x:
+            continue
+        try:
+            admins.append(int(x))
+        except ValueError:
+            logging.warning("Skipping invalid ADMIN_IDS value: %r", x)
+    ADMIN_IDS = admins
 else:
     ADMIN_IDS = [ADMIN_ID] if ADMIN_ID else []
 
