@@ -31,6 +31,19 @@ NAME, PHONE, YEAR = range(3)
 
 # Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    
+    # Prevent admins from registering as users
+    if user_id in config.ALL_ADMIN_IDS:
+        await update.message.reply_text(
+            "👋 Welcome Admin!\n\n"
+            "As an administrator, you cannot register as a user.\n"
+            "Use /view_users to see registered users." 
+            if user_id in config.LIMITED_ADMIN_IDS 
+            else "Use /approve or /list_users to manage registrations."
+        )
+        return ConversationHandler.END
+    
     welcome_image = Path("images") / "welcome.png"
     if welcome_image.exists():
         with welcome_image.open("rb") as img:
@@ -101,31 +114,33 @@ async def get_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     database.add_user(user_id, name, phone, year, username=username_value)
 
-    # Send to all admins (both full and limited) with appropriate messages
-    for admin_id in config.ALL_ADMIN_IDS:
-        if admin_id in config.FULL_ADMIN_IDS:
-            # Full admin gets approval instructions
-            message = (
-                f"📥 New Registration\n\n"
-                f"👤 Name: {name}\n"
-                f"📞 Phone: {phone}\n"
-                f"🎓 Year: {year}\n"
-                f"🆔 User ID: {user_id}\n"
-                f"🆔 User Name: {username_display}\n\n"
-                f"Approve with:\n/approve {user_id}"
-            )
-        else:
-            # Limited admin gets data only
-            message = (
-                f"📥 New Registration\n\n"
-                f"👤 Name: {name}\n"
-                f"📞 Phone: {phone}\n"
-                f"🎓 Year: {year}\n"
-                f"🆔 User ID: {user_id}\n"
-                f"🆔 User Name: {username_display}"
-            )
-        
-        await context.bot.send_message(chat_id=admin_id, text=message)
+    # Send immediate notifications to full admins only
+    for admin_id in config.FULL_ADMIN_IDS:
+        message = (
+            f"📥 New Registration\n\n"
+            f"👤 Name: {name}\n"
+            f"📞 Phone: {phone}\n"
+            f"🎓 Year: {year}\n"
+            f"🆔 User ID: {user_id}\n"
+            f"🆔 User Name: {username_display}\n\n"
+            f"Approve with:\n/approve {user_id}"
+        )
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=message)
+        except Exception as e:
+            logging.warning(f"Failed to send notification to full admin {admin_id}: {e}")
+
+    # Store notifications for limited admins (they will receive them when they interact with the bot)
+    for admin_id in config.LIMITED_ADMIN_IDS:
+        message = (
+            f"📥 New Registration\n\n"
+            f"👤 Name: {name}\n"
+            f"📞 Phone: {phone}\n"
+            f"🎓 Year: {year}\n"
+            f"🆔 User ID: {user_id}\n"
+            f"🆔 User Name: {username_display}"
+        )
+        database.add_pending_notification(admin_id, message)
 
     await query.edit_message_text(
         text="✅ Your data has been submitted for approval.\nPlease wait..."
@@ -232,8 +247,18 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Limited admin view users command (read-only)
 async def view_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in config.ALL_ADMIN_IDS:
+    user_id = update.message.from_user.id
+    if user_id not in config.ALL_ADMIN_IDS:
         return
+
+    # Send any pending notifications to limited admins
+    if user_id in config.LIMITED_ADMIN_IDS:
+        pending_notifications = database.get_and_clear_pending_notifications(user_id)
+        for notification in pending_notifications:
+            try:
+                await update.message.reply_text(notification)
+            except Exception as e:
+                logging.warning(f"Failed to send pending notification to limited admin {user_id}: {e}")
 
     all_users = database.users
     if not all_users:
